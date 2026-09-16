@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Commit messages are one line, under 75 bytes, total.
+set -euo pipefail
+
+msg_file="$1"
+# Strip comment lines git adds to the template.
+body=$(grep -v '^#' "$msg_file" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
+lines=$(printf '%s\n' "$body" | grep -c . || true)
+
+fail() { printf '\ncommit-msg: %s\n\n' "$1" >&2; exit 1; }
+
+[ "$bytes" -gt 0 ] || fail "the message is empty"
+
+if [ "$bytes" -ge 75 ]; then
+  fail "message is $bytes bytes, the limit is 74.
+  Rationale belongs in docs/specs, not in the log.
+  Got: $(printf '%s' "$body" | head -1)"
+fi
+
+if [ "$lines" -gt 1 ]; then
+  fail "message is $lines lines, the limit is 1."
+fi
+
+# Conventional Commits, so the log stays greppable by area.
+if ! printf '%s' "$body" | grep -Eq '^(feat|fix|docs|test|refactor|perf|chore|build|ci)(\([a-z0-9/-]+\))?!?: .+'; then
+  fail "message must start with a conventional type.
+  One of: feat fix docs test refactor perf chore build ci
+  Got: $(printf '%s' "$body" | head -1)"
+fi
+
+# The house rule: no em dashes, anywhere.
+if printf '%s' "$body" | grep -q '—'; then
+  fail "message contains an em dash; use a plain dash"
+fi
+
+# Attribution never lands in this repo's history, which is the same rule
+# KRK-002-R53 enforces on tentacles.
+if printf '%s' "$body" | grep -Eqi 'co-authored-by|generated with|🤖'; then
+  fail "no agent attribution in commit messages"
+fi

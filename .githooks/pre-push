@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Refuse to push anything that does not build, vet, format, or pass.
+set -uo pipefail
+
+red() { printf '\033[31m%s\033[0m\n' "$1" >&2; }
+ok()  { printf '  ok    %s\n' "$1" >&2; }
+die() { red ""; red "pre-push: $1"; red "  push refused. --no-verify overrides, and owns the consequences."; red ""; exit 1; }
+
+printf '\npre-push: gating\n' >&2
+
+# 1. Formatting.
+unformatted=$(gofmt -l . 2>/dev/null | grep -v '^$' || true)
+[ -z "$unformatted" ] || die "gofmt would change:
+$unformatted"
+ok "gofmt"
+
+# 2. Vet.
+go vet ./... >/dev/null 2>&1 || { go vet ./...; die "go vet failed"; }
+ok "go vet"
+
+# 3. Tests.
+if ! out=$(go test ./... 2>&1); then
+  printf '%s\n' "$out" >&2
+  die "tests failed"
+fi
+ok "go test"
+
+# 4. Every outgoing commit message obeys the one-line 74-byte rule.
+while read -r _ local_sha _ remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  for c in $(git rev-list "$range" 2>/dev/null); do
+    body=$(git log -1 --format=%B "$c" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+    bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
+    lines=$(printf '%s\n' "$body" | grep -c . || true)
+    if [ "$bytes" -ge 75 ] || [ "$lines" -gt 1 ]; then
+      die "commit ${c:0:7} has a $bytes byte, $lines line message; the limit is one line under 75 bytes
+  $(printf '%s' "$body" | head -1)"
+    fi
+    if git log -1 --format=%B "$c" | grep -Eqi 'co-authored-by|generated with'; then
+      die "commit ${c:0:7} carries agent attribution"
+    fi
+  done
+done
+ok "commit messages"
+
+printf 'pre-push: clear\n\n' >&2
