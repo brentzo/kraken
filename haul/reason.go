@@ -53,10 +53,22 @@ const (
 // is a validation error under another, which is what keeps the pair meaningful
 // rather than decorative.
 var reasonsByOutcome = map[Outcome]map[ReasonCode]bool{
+	// partial permits the blocked reasons too. Found 2026-09-16 by a real
+	// dive: the tentacle edited a file, was denied `git add` by the permission
+	// layer, and reported partial with permission_required. That pairing is
+	// honest and the table rejected it.
+	//
+	// The distinction that matters is not why you stopped but what state you
+	// left behind. blocked means retry the same prompt once the resource is
+	// supplied; partial means work exists and someone must decide about it.
+	// A permission wall can produce either.
 	OutcomePartial: {
 		ReasonTurnLimit: true, ReasonTokenBudget: true, ReasonTimeLimit: true,
 		ReasonCostBudget: true, ReasonScopeTooLarge: true,
 		ReasonDependencyIncomplete: true,
+		ReasonPermissionRequired:   true, ReasonCredentialMissing: true,
+		ReasonNetworkDenied: true, ReasonToolUnavailable: true,
+		ReasonHumanInputRequired: true,
 	},
 	OutcomeNoOp: {
 		ReasonAlreadySatisfied: true, ReasonNotApplicable: true,

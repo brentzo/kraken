@@ -79,3 +79,23 @@ func TestState_OnlyValidIsAdmissible(t *testing.T) {
 		}
 	}
 }
+
+// A permission wall can leave work behind, so partial must be able to say so.
+// The table originally forbade this and a real dive caught it.
+func TestReasonCode_PartialAcceptsBlockedReasons(t *testing.T) {
+	for _, r := range []ReasonCode{
+		ReasonPermissionRequired, ReasonCredentialMissing, ReasonNetworkDenied,
+		ReasonToolUnavailable, ReasonHumanInputRequired,
+	} {
+		if !r.PermittedFor(OutcomePartial) {
+			t.Errorf("%q must be permittable under partial: a tentacle can do half the work and then hit a wall", r)
+		}
+		if !r.PermittedFor(OutcomeBlocked) {
+			t.Errorf("%q must remain valid under blocked", r)
+		}
+	}
+	// The distinction still has to mean something.
+	if ReasonAlreadySatisfied.PermittedFor(OutcomePartial) {
+		t.Error("no_op reasons must not leak into partial")
+	}
+}
