@@ -1,4 +1,12 @@
-# Design notes and tracker. Local only.
+# Design notes, specs, and tracker. Local only.
 docs/
+
+# Vendor worktrees. `claude --worktree` checks out here at runtime.
+# Only this subpath - the rest of .claude/ is committed project config,
+# including the Claude Code layout kraken renders from .agents/.
+.claude/worktrees/
+
+# Personal settings overrides. .claude/settings.json IS committed.
+.claude/settings.local.json
 
 .DS_Store
