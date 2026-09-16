@@ -26,6 +26,22 @@ fi
 ok "go test"
 
 # 4. Every outgoing commit message obeys the one-line 74-byte rule.
+#
+# Commits at or before the policy baseline are grandfathered. The rule was
+# adopted partway through this repo's life, and rewriting history to satisfy a
+# rule adopted later destroys the reasoning those commits carried. New commits
+# obey it; old ones are left alone.
+baseline=""
+if [ -f "$(git rev-parse --show-toplevel)/.githooks/msg-policy-since" ]; then
+  baseline=$(head -1 "$(git rev-parse --show-toplevel)/.githooks/msg-policy-since" | tr -d '[:space:]')
+fi
+
+grandfathered() {
+  [ -n "$baseline" ] || return 1
+  git rev-parse --verify --quiet "$baseline^{commit}" >/dev/null || return 1
+  git merge-base --is-ancestor "$1" "$baseline" 2>/dev/null
+}
+
 while read -r _ local_sha _ remote_sha; do
   [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
   if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
@@ -34,6 +50,7 @@ while read -r _ local_sha _ remote_sha; do
     range="$remote_sha..$local_sha"
   fi
   for c in $(git rev-list "$range" 2>/dev/null); do
+    grandfathered "$c" && continue
     body=$(git log -1 --format=%B "$c" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
     bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
     lines=$(printf '%s\n' "$body" | grep -c . || true)
