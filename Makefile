@@ -22,7 +22,9 @@ history:
 	@w=$$(mktemp -d); \
 	for c in $$(git rev-list --reverse origin/main..HEAD 2>/dev/null || git rev-list --reverse HEAD); do \
 	  rm -rf $$w; git worktree add -q --detach $$w $$c; \
-	  if (cd $$w && go build ./... >/dev/null 2>&1 && go test ./... >/dev/null 2>&1); then \
+	  if [ ! -f $$w/go.mod ]; then \
+	    printf "  skip  %s  %s (no go module yet)\n" "$${c:0:7}" "$$(git log -1 --format=%s $$c)"; \
+	  elif (cd $$w && go build ./... >/dev/null 2>&1 && go test ./... >/dev/null 2>&1); then \
 	    printf "  ok    %s  %s\n" "$${c:0:7}" "$$(git log -1 --format=%s $$c)"; \
 	  else \
 	    printf "  FAIL  %s  %s\n" "$${c:0:7}" "$$(git log -1 --format=%s $$c)"; \
