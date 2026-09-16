@@ -32,6 +32,57 @@ type envelope struct {
 	PermissionDenials []any           `json:"permission_denials"`
 }
 
+// boundaries is the contract text every tentacle is given, carried on
+// --append-system-prompt so it survives a long conversation where the original
+// user turn has fallen out of attention.
+//
+// Nothing here is decoration. A tentacle that does not know it must commit
+// leaves its work in a worktree where the beak cannot reach it, which is
+// exactly what the first live dive did.
+const boundaries = `You are a kraken tentacle working one task in an isolated git worktree.
+
+Boundaries:
+- Work only inside this worktree. Do not touch any other branch or repository.
+- Commit your work on the current branch when you are done. Kraken integrates it.
+  Work you leave uncommitted cannot be integrated and does not count as done.
+- Do not push, do not open a pull request, and do not merge. Those are kraken's.
+- Do not run git push, git worktree, git rebase, git branch -d, or git update-ref.
+- Do not add yourself, your model, or any agent as a co-author. No Co-Authored-By
+  trailer naming an agent, no "Generated with" line, no tool attribution.
+- A denied tool is a stopping condition, not an obstacle. Report it and stop.
+
+Reporting:
+- Your report is checked against git. The changed-file set is recomputed from the
+  diff against the base commit, so an inaccurate report is detected rather than
+  believed. Report what you actually did.
+- If you did part of the work and could not finish, say partial and name what is
+  left in not_done. That is a useful answer, not a failure.`
+
+// gitTools is the scoped git authority a tentacle needs to land its own work.
+//
+// It deliberately stops short of anything that reaches past the branch. A
+// tentacle that can push bypasses the beak entirely, which is the one thing the
+// whole design exists to prevent.
+var gitTools = []string{
+	"Bash(git add:*)",
+	"Bash(git commit:*)",
+	"Bash(git status:*)",
+	"Bash(git diff:*)",
+	"Bash(git log:*)",
+}
+
+// deniedTools are refused regardless of the allowlist, so a task that talks a
+// tentacle into widening its own authority still cannot reach them.
+var deniedTools = []string{
+	"Bash(git push:*)",
+	"Bash(git worktree:*)",
+	"Bash(git rebase:*)",
+	"Bash(git update-ref:*)",
+	"Bash(git reset:--hard*)",
+	"WebFetch",
+	"WebSearch",
+}
+
 func runDive(args []string) (int, error) {
 	f := fs("dive")
 	dir := f.String("C", "", "repository to work in (default: the current directory)")
@@ -39,6 +90,7 @@ func runDive(args []string) (int, error) {
 	budget := f.Float64("budget-usd", 5.00, "maximum spend for this dive")
 	timeout := f.Duration("timeout", 45*time.Minute, "give up on the tentacle after this long")
 	permMode := f.String("permission-mode", "acceptEdits", "permission mode for the tentacle")
+	allowGit := f.Bool("allow-git", true, "grant the scoped git tools a tentacle needs to commit its own work")
 	asJSON := f.Bool("json", false, "print the verification record as JSON")
 	keep := f.Bool("keep", true, "keep the worktree after the dive")
 	f.Usage = func() {
@@ -94,7 +146,7 @@ exit codes match kraken verify: 0 work_done, 1 divergent, 2 not_proceeded,
 	}
 
 	started := time.Now().UTC()
-	env, runErr := runTentacle(ctx, repo, name, task, string(schema), *model, *permMode, *budget)
+	env, runErr := runTentacle(ctx, repo, name, task, string(schema), *model, *permMode, *budget, *allowGit)
 	ended := time.Now().UTC()
 
 	// The worktree the vendor created. Verified layout, Claude Code 2.1.273.
@@ -153,19 +205,39 @@ exit codes match kraken verify: 0 work_done, 1 divergent, 2 not_proceeded,
 
 // runTentacle invokes the agent. No shell: the task text and the schema are
 // passed as argv entries, so neither can word-split, glob, or inject.
-func runTentacle(ctx context.Context, repo, name, task, schema, model, permMode string, budget float64) (*envelope, error) {
+func runTentacle(ctx context.Context, repo, name, task, schema, model, permMode string, budget float64, allowGit bool) (*envelope, error) {
+	// Flag order matters here, and it is not cosmetic.
+	//
+	// --allowedTools and --disallowedTools are variadic (<tools...>), so they
+	// consume every following argument until the next flag. Putting either of
+	// them last swallows the task itself, and the CLI then reports
+	//   Input must be provided either through stdin or as a prompt argument
+	// which names the symptom and not the cause. The values are comma-joined
+	// so each flag takes exactly one token, and a non-variadic flag is placed
+	// last so the positional prompt cannot be absorbed.
 	args := []string{
 		"-p",
 		"--output-format", "json",
-		"--json-schema", schema,
 		"--worktree", name,
 		"--permission-mode", permMode,
 		"--max-budget-usd", fmt.Sprintf("%.2f", budget),
+		"--disallowedTools", strings.Join(deniedTools, ","),
+	}
+	if allowGit {
+		// acceptEdits permits file edits but not git through Bash, so without
+		// this a tentacle can write the change and not land it. Found by the
+		// first live dive, which did exactly that.
+		args = append(args, "--allowedTools", strings.Join(gitTools, ","))
 	}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
-	args = append(args, task)
+	// Both of these take exactly one value, so they are safe to sit last.
+	args = append(args,
+		"--json-schema", schema,
+		"--append-system-prompt", boundaries,
+		task,
+	)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = repo
