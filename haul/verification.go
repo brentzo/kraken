@@ -38,6 +38,10 @@ type Observed struct {
 	Files      []FileChange `json:"files"`
 	HeadCommit string       `json:"head_commit,omitempty"`
 	BaseCommit string       `json:"base_commit,omitempty"`
+	// Uncommitted is work in the worktree that never reached the branch.
+	// The beak cannot integrate it, and it is not the same fact as nothing
+	// having been done.
+	Uncommitted []string `json:"uncommitted,omitempty"`
 	// AgentAttribution lists commits carrying agent co-authorship or tool
 	// attribution. Any entry fails verification and bars the branch from the
 	// beak. KRK-002-R53.

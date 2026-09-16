@@ -202,3 +202,37 @@ func asExitError(err error, target **exec.ExitError) bool {
 	}
 	return false
 }
+
+// DirtyEntry is one path with uncommitted changes.
+type DirtyEntry struct {
+	Status string // the two-character porcelain status
+	Path   string
+}
+
+// Dirty returns the worktree's uncommitted changes, staged or not, including
+// untracked files.
+//
+// This matters because the beak merges branches, so work sitting in a worktree
+// is not integrable. Reporting it as zero changed files would say the tentacle
+// did nothing, when in fact it did the work and could not land it.
+func (r *Repo) Dirty(ctx context.Context) ([]DirtyEntry, error) {
+	out, err := r.run(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	var entries []DirtyEntry
+	fields := strings.Split(out, "\x00")
+	for i := 0; i < len(fields); i++ {
+		f := fields[i]
+		if len(f) < 4 {
+			continue
+		}
+		status, path := f[:2], f[3:]
+		// A rename carries its source in the following NUL-separated field.
+		if status[0] == 'R' || status[0] == 'C' {
+			i++
+		}
+		entries = append(entries, DirtyEntry{Status: status, Path: path})
+	}
+	return entries, nil
+}

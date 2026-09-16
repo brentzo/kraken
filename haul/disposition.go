@@ -19,8 +19,14 @@ const (
 // Evidence is what the head recomputed, independent of anything claimed.
 // A zero Evidence with Recomputed false means verification did not run.
 type Evidence struct {
-	Recomputed       bool
-	ChangedFiles     []string
+	Recomputed bool
+	// ChangedFiles is the COMMITTED diff against the base commit. It is the
+	// only thing the beak can integrate, because the beak merges branches.
+	ChangedFiles []string
+	// Uncommitted is work present in the worktree but not on the branch.
+	// It is evidence that work happened and evidence that it is not
+	// integrable, which are two different facts and both matter.
+	Uncommitted      []string
 	ChecksPassed     bool
 	ChecksRun        bool
 	AgentAttribution []string
@@ -79,8 +85,17 @@ func Classify(r Result, ev Evidence, exit ExitKind) (Disposition, VerifyStatus, 
 
 	switch claimed {
 	case OutcomeCompleted, OutcomePartial:
+		if empty && len(ev.Uncommitted) > 0 && claimed == OutcomePartial {
+			// Work exists in the worktree but never reached the branch. A
+			// partial claim describing that is honest, not a contradiction,
+			// and it is still not integrable. Found by a real dive whose
+			// tentacle was denied `git add`.
+			return DispNotProceeded, StatusVerified, ReasonPermissionRequired
+		}
 		if empty {
-			// The whole reason the haul has two halves.
+			// The whole reason the haul has two halves. A completed claim is
+			// contradicted even when the worktree is dirty: uncommitted work
+			// is not the work being claimed.
 			return DispDivergent, StatusContradicted, ReasonCheckFailed
 		}
 		if ev.ChecksRun && !ev.ChecksPassed {

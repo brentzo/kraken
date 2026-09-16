@@ -349,3 +349,67 @@ func TestVerify_RecordIsReproducible(t *testing.T) {
 		t.Errorf("digest = %q, want the exact bytes read", a.HaulDigest)
 	}
 }
+
+// Found by a real dive on 2026-09-16: the tentacle edited a file, was denied
+// `git add` by the permission layer, and honestly reported partial. Reading
+// only committed history called that zero changed files, which would have made
+// an honest report look like a contradiction.
+func TestVerify_UncommittedWorkIsNotNothing(t *testing.T) {
+	dir, base := repo(t)
+	write(t, dir, "greet.py", "def greet(name):\n    \"\"\"Greet someone.\"\"\"\n    return name\n")
+	// Deliberately NOT committed.
+
+	h := claimsHaul(base, haul.OutcomePartial,
+		&haul.OutcomeDetail{ReasonCode: haul.ReasonPermissionRequired, Message: "git add was denied"},
+		[]haul.NotDoneItem{{What: "the commit", Why: "permission denied"}})
+
+	rec, err := verifier(dir).Verify(context.Background(), result(h), haul.ExitClean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Disposition != haul.DispNotProceeded {
+		t.Errorf("disposition = %q, want not_proceeded: the work is real but not integrable", rec.Disposition)
+	}
+	if rec.Status == haul.StatusContradicted {
+		t.Error("an honest partial must not be recorded as a contradiction")
+	}
+	if len(rec.Observed.Uncommitted) == 0 {
+		t.Error("the modified file must be reported as uncommitted, not as nothing")
+	}
+	if len(rec.Observed.Files) != 0 {
+		t.Error("uncommitted work must not appear as a committed change")
+	}
+}
+
+// The same dirty worktree under a completed claim is still a contradiction:
+// uncommitted work is not the work being claimed.
+func TestVerify_CompletedWithOnlyUncommittedWorkIsStillDivergent(t *testing.T) {
+	dir, base := repo(t)
+	write(t, dir, "a.go", "package a\n")
+
+	rec, _ := verifier(dir).Verify(context.Background(),
+		result(claimsHaul(base, haul.OutcomeCompleted, nil, nil)), haul.ExitClean)
+	if rec.Disposition != haul.DispDivergent {
+		t.Errorf("disposition = %q, want divergent", rec.Disposition)
+	}
+	if rec.Error == nil || !strings.Contains(rec.Error.Message, "nothing was committed") {
+		t.Errorf("the reason should name the real problem, got %+v", rec.Error)
+	}
+}
+
+func TestVerify_UntrackedFilesCountAsUncommitted(t *testing.T) {
+	dir, base := repo(t)
+	write(t, dir, "brand/new.txt", "x\n")
+
+	rec, _ := verifier(dir).Verify(context.Background(),
+		result(claimsHaul(base, haul.OutcomeCompleted, nil, nil)), haul.ExitClean)
+	var found bool
+	for _, u := range rec.Observed.Uncommitted {
+		if u == "brand/new.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("an untracked file is uncommitted work, got %v", rec.Observed.Uncommitted)
+	}
+}

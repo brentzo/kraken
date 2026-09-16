@@ -113,6 +113,15 @@ func (v *Verifier) evidence(ctx context.Context, h *haul.Haul) (haul.Evidence, *
 		return haul.Evidence{}, nil, fmt.Errorf("reading commits: %w", err)
 	}
 
+	dirty, err := v.Repo.Dirty(ctx)
+	if err != nil {
+		return haul.Evidence{}, nil, fmt.Errorf("reading worktree state: %w", err)
+	}
+	uncommitted := make([]string, 0, len(dirty))
+	for _, d := range dirty {
+		uncommitted = append(uncommitted, d.Path)
+	}
+
 	observed := &haul.Observed{
 		HeadCommit: head,
 		BaseCommit: base,
@@ -132,9 +141,12 @@ func (v *Verifier) evidence(ctx context.Context, h *haul.Haul) (haul.Evidence, *
 		observed.AgentAttribution = append(observed.AgentAttribution, a.String())
 	}
 
+	observed.Uncommitted = uncommitted
+
 	return haul.Evidence{
 		Recomputed:       true,
 		ChangedFiles:     paths,
+		Uncommitted:      uncommitted,
 		AgentAttribution: observed.AgentAttribution,
 		// Check re-running is a later slice. Claiming ChecksRun here would
 		// assert an inspection that never happened, which is the exact
@@ -166,6 +178,10 @@ func contradiction(h *haul.Haul, ev haul.Evidence) string {
 	switch h.Claims.Outcome {
 	case haul.OutcomeCompleted, haul.OutcomePartial:
 		if len(ev.ChangedFiles) == 0 {
+			if len(ev.Uncommitted) > 0 {
+				return fmt.Sprintf("claimed %q and %d file(s) are modified in the worktree, but nothing was committed, so there is nothing for the beak to integrate: %v",
+					h.Claims.Outcome, len(ev.Uncommitted), ev.Uncommitted)
+			}
 			return fmt.Sprintf("claimed %q but the recomputed diff against %s is empty",
 				h.Claims.Outcome, short(h.Assignment.BaseCommit))
 		}
