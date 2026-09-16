@@ -36,9 +36,20 @@ if [ -f "$(git rev-parse --show-toplevel)/.githooks/msg-policy-since" ]; then
   baseline=$(head -1 "$(git rev-parse --show-toplevel)/.githooks/msg-policy-since" | tr -d '[:space:]')
 fi
 
+# A SHA baseline does not survive a history rewrite, and a silently stale one
+# would quietly re-apply the rule to grandfathered commits. Detect that and say
+# exactly what to do rather than failing in a confusing way.
+if [ -n "$baseline" ]; then
+  if ! git rev-parse --verify --quiet "$baseline^{commit}" >/dev/null \
+     || ! git merge-base --is-ancestor "$baseline" HEAD 2>/dev/null; then
+    die "the message-policy baseline is stale, probably after a history rewrite.
+  .githooks/msg-policy-since names ${baseline:0:12}, which is not an ancestor of HEAD.
+  Update it to the last commit that predates the one-line message rule."
+  fi
+fi
+
 grandfathered() {
   [ -n "$baseline" ] || return 1
-  git rev-parse --verify --quiet "$baseline^{commit}" >/dev/null || return 1
   git merge-base --is-ancestor "$1" "$baseline" 2>/dev/null
 }
 
